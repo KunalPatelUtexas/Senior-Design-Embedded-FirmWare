@@ -1,0 +1,409 @@
+dim addr(6)
+dim Timer
+dim LockUnlock
+dim a
+
+dim res
+dim p
+dim data
+
+dim app_handle
+dim incoming
+
+const motorMask = $0C
+const alarmMask = $01
+const wireMask = $02
+const lockedMask = $10
+const unlockedMask = $20
+const shackleMask = $40
+const Counter = $15 # DO NOT CHANGE, COUNTER THAT RUNS THE DUTY PWM SOFTWARE FOR 1 SECOND
+const Seconds = $5
+const inputMask = $72
+const myPort = 1
+
+#no unlock button
+dim unlock_cycle_count
+
+#ping alarm
+dim count_ping
+dim ping_requested
+# use 50ms * ping_time to calculate constants
+const ping_short = 10		# .5 seconds
+const ping_medium = 20		#  1 second
+const ping_long = 40		#  2 seconds
+
+#hardware input flags
+dim wireCut
+dim lockedposition
+dim unlockedposition
+dim shackleDepressed
+
+#battery stuff
+dim tmp(1)
+dim temp
+dim batconn_handle
+dim tmpconn_handle
+#store battery measurement result
+dim batresult
+
+
+
+#init gap mod, bonding and start freerunning times on system boot
+event system_boot(major ,minor ,patch ,build ,ll_version ,protocol_version ,hw )
+
+#########################################################################################################################################
+
+
+# initialize Bluetooth
+
+
+#########################################################################################################################################
+
+    batconn_handle=$ff
+	tmpconn_handle=$ff
+	
+	# Get local BT address
+	 call system_address_get( )(addr(0:6))
+	
+	# Write BT address to DI service serial number string
+	 call attributes_write(xgatt_dis_2a25,0,6,addr(0:5))
+
+	# Set device to advertisement mode and allow undirected connections
+	 call gap_set_mode(gap_general_discoverable,gap_undirected_connectable)
+	# Allow pairing
+	 call sm_set_bondable_mode(1)
+	
+	
+#########################################################################################################################################
+
+
+# initialize Buttons
+
+
+#########################################################################################################################################
+
+
+	# call hardware_io_port_irq_enable(myPort, inputMask)
+	# call hardware_io_port_irq_direction(myPort, 0)
+	
+	
+	
+	wireCut = $0
+	lockedposition = $0
+	unlockedposition = $0
+	shackleDepressed = $0
+	ping_requested = $0
+	
+	
+#########################################################################################################################################
+
+
+# initialize the PWM code to run the motor
+
+
+#########################################################################################################################################
+	
+	# pass 1638 to pulse 20 Hz, pass 0 to disable the timer 
+	# set LockUnlock to 0 to unlock, set LockUnlock to 1 to lock
+	
+	Timer = Counter * Seconds
+	
+	#1 is to lock, 2 is to unlock
+	LockUnlock = $0
+	call hardware_io_port_write(myPort,motorMask,motorMask)
+	call hardware_io_port_config_direction(myPort,$0D)
+	call hardware_io_port_write(myPort,motorMask,$0)
+	call hardware_io_port_write(myPort,alarmMask,$0)
+
+	call hardware_set_soft_timer(1638,0,0) # starts PWM hardware interrupt
+	
+	
+#########################################################################################################################################
+	
+	while(1)
+
+		 if wireCut = $1 then
+		 	call hardware_io_port_write(myPort,alarmMask,$1)
+			# call hardware_io_port_write(myPort,alarmMask,$0)
+
+		 end if
+	
+	end while
+	
+
+end
+
+
+
+#########################################################################################################################################
+
+
+# Start the PWM, timer expired. timer expired
+
+
+#########################################################################################################################################
+	
+event hardware_soft_timer(handle)
+ 
+ 
+		if(ping_requested = $1) then
+			if(count_ping > 0) then
+				call hardware_io_port_write(myPort,alarmMask,$1)
+				count_ping = count_ping - $1
+			else
+				call hardware_io_port_write(myPort,alarmMask,$0)
+				ping_requested = $0
+			end if
+			
+		end if
+		
+		if(unlock_cycle_count > 0) then													############################ CHANGE: antonio doesnt want the unlock button
+				unlock_cycle_count = unlock_cycle_count - 1
+				unlockedposition = 0
+		else
+				unlockedposition = 1
+		end if
+ 
+
+
+		call hardware_io_port_read(1, inputMask)(res, p, data)
+
+		    if (data & lockedMask) = 0 then
+					#LockUnlock = 1
+					lockedposition = 1
+				else
+					lockedposition = 0
+				
+		    end if
+													############################ CHANGE: antonio doesnt want the unlock button
+#			if (data & unlockedMask) then  # CHANGE: added " = 0" to flip logic
+#					unlockedposition = 1
+#				else
+#					unlockedposition = 0
+#		    end if
+			
+			if (data & shackleMask) = 0 then
+					# shackle is depressed
+					shackleDepressed = $1
+				else
+					shackleDepressed = $0
+			end if
+			
+			 if (data & wireMask) = 0 then
+					# # sound the alarm
+					 wireCut = $1
+		 		 	call hardware_io_port_write(myPort,alarmMask,$1)
+
+			 end if 
+	
+			
+			
+		if(LockUnlock = 1) then
+			#Lock
+				if (shackleDepressed = 1) then
+					call hardware_io_port_write(myPort,motorMask,motorMask)
+				else
+					call attributes_user_write_response(app_handle,1)
+					LockUnlock = $0
+				end if
+				
+				a = a
+				a = a
+				a = a
+				a = a + 1
+				a = a + 1
+				call hardware_io_port_write(myPort,motorMask,$0)
+		end if
+		
+		if(LockUnlock = 2) then
+			#unlock
+				call hardware_io_port_write(myPort,motorMask,motorMask)
+				a = a + 1
+				a = a
+				a = a + 1
+				a = a + 1
+				a = a + 1
+				a = a + 1
+				a = a + 1
+				a = a + 1
+				a = a + 1
+				call hardware_io_port_write(myPort,motorMask,$0)
+		end if
+
+		if(LockUnlock & lockedposition) = 1 then
+			#call hardware_set_soft_timer(0,0,0) 		# turn the timer back off
+			call hardware_io_port_write(myPort,motorMask,$0)
+
+			LockUnlock = $0
+			call attributes_user_write_response(app_handle,11)
+
+
+		end if
+		
+		if((LockUnlock = 2) & (unlockedposition = 1)) then
+			#call hardware_set_soft_timer(0,0,0) 		# turn the timer back off
+			call hardware_io_port_write(myPort,motorMask,$0)
+
+			LockUnlock = $0
+			call attributes_user_write_response(app_handle,10)
+			unlockedposition = 0													############################ CHANGE: antonio doesnt want the unlock button
+
+
+		end if
+end
+
+
+#########################################################################################################################################
+
+
+# event runs when App writes to this system
+
+
+
+# add something that will ping the alarm
+
+#########################################################################################################################################
+
+event attributes_value(connection ,reason ,handle ,offset ,value_len, value)
+    app_handle=connection
+	#display to command mode
+	
+	incoming = value(0:1)
+	
+	if incoming = 10 then
+		# unlock the lock
+		LockUnlock = $2
+		unlock_cycle_count = 20										############################ CHANGE: antonio doesnt want the unlock button
+		call hardware_io_port_write(myPort,motorMask,$1)
+		call hardware_io_port_config_direction(myPort,$0D)
+		call hardware_set_soft_timer(1638,0,0) # starts PWM hardware interrupt
+			
+	end if
+	
+	if incoming = 11 then
+		# lock the lock
+		LockUnlock = $1
+		
+		call hardware_io_port_write(myPort,motorMask,$1)
+		call hardware_io_port_config_direction(myPort,$0D)
+		call hardware_set_soft_timer(1638,0,0) # starts PWM hardware interrupt
+	
+	end if
+	
+	
+	if incoming = 20 then 	
+			
+
+			if ping_requested = $0 then
+				ping_requested = $1
+				count_ping = ping_short		# .5 seconds
+			end if
+			
+		call attributes_user_write_response(app_handle,20)
+
+	end if
+	
+	
+	if incoming = 21 then
+			
+
+			if ping_requested = $0 then
+				ping_requested = $1
+				count_ping = ping_medium		# 1 second
+			end if
+			
+		call attributes_user_write_response(app_handle,20)
+
+	end if	
+	
+	if incoming = 22 then
+			
+
+			if ping_requested = $0 then
+				ping_requested = $1
+				count_ping = ping_long		# 2 seconds
+			end if
+			
+		call attributes_user_write_response(app_handle,20)
+
+	end if
+	
+	if ((incoming > 30)) then
+	
+		call attributes_user_write_response(app_handle,1)
+
+	end if
+	
+end
+
+
+
+#########################################################################################################################################
+
+
+# events run when app reads from device
+
+
+#########################################################################################################################################
+
+
+	
+event attributes_user_read_request(connection, handle, offset, maxsize)
+	batconn_handle=connection
+	#start measurement, read VDD/3, 9 effective bits 
+	call hardware_adc_read(15,3,0)
+end
+
+event attclient_attribute_value(connection, atthandle, type, value_len, value_data)
+	tmpconn_handle=connection
+	
+	call attclient_read_by_handle(tmpconn_handle, atthandle)(tmpconn_handle, temp)
+end
+
+# ADC event listener
+event hardware_adc_result(input,value)
+    #scale value to range 0-100
+	#measurement range is 32768=1.15v*3=3.45V
+	#new battery ADC measurement is 20912=2.52v
+	#minimum battery voltage is 2.0 volts=2.0v/3.45v*32768= 18996
+	#20912-18996=1916
+	
+	batresult=(value-18995)*100/1916
+	
+	#clip to 100%
+	if batresult>100 then
+		batresult=100
+	end if
+	if batresult<0 then
+	    batresult=0
+	end if
+
+	tmp(0:1)=batresult
+	
+	if batconn_handle<$ff then
+		#if connection handle is valid
+		#call attributes_user_read_response(batconn_handle,0,22,"Hello World!Hello Worl")
+			  if((lockedposition = 1)) then
+				  tmp(0:1) = batresult + 128
+			  end if
+		call attributes_user_read_response(batconn_handle,0,1,tmp(0:1))
+		batconn_handle=$ff
+	end if
+end
+#########################################################################################################################################
+
+
+# runs when the phone is disconnected from the device
+
+
+#########################################################################################################################################
+
+
+
+event connection_disconnected(handle,result)
+	#clear cached handle
+    batconn_handle=$ff
+	#in case if disconnect, return to advertisement mode
+    call gap_set_mode(gap_general_discoverable,gap_undirected_connectable)
+end
+
